@@ -1,0 +1,46 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "data": {
+          "mac": "MAC Address",
+          "device_token": "Device Token"
+        },
+        "description": "Select a device from the list or enter details manually",
+        "title": "Set up Syncleo Device"
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to device",
+      "invalid_input": "Invalid input format",
+      "unknown": "Unknown error occurred"
+    },
+    "abort": {
+      "already_configured": "Device is already configured",
+      "invalid_discovery_info": "Invalid discovery information"
+    }
+  },
+  "entity": {
+    "switch": {
+      "child_lock": {
+        "name": "Child--Lock"
+      },
+      "volume": {
+        "name": "Volume"
+      },
+      "backlight": {
+        "name": "Backlight"
+      }
+    },
+    "water_heater": {
+      "syncleo_kettle": {
+        "name": "Kettle"
+      }
+    },
+    "light": {
+      "night_light": {
+        "name": "Night Light"
+      }
+    }
+  }
+}

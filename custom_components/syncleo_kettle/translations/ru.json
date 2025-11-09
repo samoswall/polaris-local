@@ -1,1 +1,55 @@
-
+{
+  "config": {
+    "step": {
+      "user": {
+        "data": {
+          "mac": "MAC-адрес",
+          "device_token": "Токен устройства"
+        },
+        "description": "Выберите устройство из списка или введите данные вручную",
+        "title": "Настройка устройства Syncleo"
+      }
+    },
+    "error": {
+      "cannot_connect": "Не удалось подключиться к устройству",
+      "invalid_input": "Неверный формат данных",
+      "unknown": "Неизвестная ошибка"
+    },
+    "abort": {
+      "already_configured": "Устройство уже настроено",
+      "invalid_discovery_info": "Неверные данные обнаружения"
+    }
+  },
+  "entity": {
+    "switch": {
+      "child_lock": {
+        "name": "Блокировка от детей"
+      },
+      "volume": {
+        "name": "Звук"
+      },
+      "backlight": {
+        "name": "Подсветка"
+      }
+    },
+    "water_heater": {
+      "syncleo_kettle": {
+        "name": "Чайник",
+        "state": {
+          "off": "Выключен",
+          "heat": "Кипячение",
+          "boil_keep": "Кипячение с удержанием",
+          "warmup": "Разогрев",
+          "warmup_keep": "Разогрев с удержанием",
+          "iq_boil": "IQ Кипячение",
+          "tea_ceremony": "Чайная церемония"
+        }
+      }
+    },
+    "light": {
+      "night_light": {
+        "name": "Ночник"
+      }
+    }
+  }
+}
