@@ -58,6 +58,7 @@ class KettleNightLight(LightEntity):
         
         # Храним базовый цвет без учета яркости
         self._base_rgb_color = (255, 255, 255)  # Белый по умолчанию
+        self._data_length = 4
 
     @property
     def available(self) -> bool:
@@ -76,6 +77,7 @@ class KettleNightLight(LightEntity):
         r = color_data.get("r", 255)
         g = color_data.get("g", 255)
         b = color_data.get("b", 255)
+        self._data_length = color_data.get("data_length", 4)
         
         # Сохраняем базовый цвет (то, что пришло от устройства)
         self._base_rgb_color = (r, g, b)
@@ -115,7 +117,7 @@ class KettleNightLight(LightEntity):
                 r_full = min(255, int(r / brightness_factor)) if brightness_factor > 0 else 0
                 g_full = min(255, int(g / brightness_factor)) if brightness_factor > 0 else 0
                 b_full = min(255, int(b / brightness_factor)) if brightness_factor > 0 else 0
-                await self.coordinator.async_set_color_night(r_full, g_full, b_full)
+                await self.coordinator.async_set_color_night(r_full, g_full, b_full, 0, self._data_length)
             
             update_needed = True
             
@@ -136,11 +138,11 @@ class KettleNightLight(LightEntity):
                 
                 # Сохраняем базовый цвет (то, что отправляем на устройство)
                 self._base_rgb_color = (r_full, g_full, b_full)
-                await self.coordinator.async_set_color_night(r_full, g_full, b_full)
+                await self.coordinator.async_set_color_night(r_full, g_full, b_full, 0, self._data_length)
             else:
                 # При 100% яркости просто используем полученный цвет
                 self._base_rgb_color = (r, g, b)
-                await self.coordinator.async_set_color_night(r, g, b)
+                await self.coordinator.async_set_color_night(r, g, b, 0, self._data_length)
                 
             update_needed = True
         

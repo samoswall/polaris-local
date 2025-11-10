@@ -27,7 +27,8 @@ from .protocol import (
     NightMessage,
     ColorNightMessage,
     DeviceHardwareMessage,
-    ErrorMessage
+    ErrorMessage,
+    WeightMessage
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -63,6 +64,7 @@ class PolarisDataUpdateCoordinator(DataUpdateCoordinator, IncomingMessageListene
             "error": False,
             "connected": False,
             "device_hardware": None,
+            "weight": None,
         }
         
         # Device info будет установлен после discovery
@@ -72,6 +74,7 @@ class PolarisDataUpdateCoordinator(DataUpdateCoordinator, IncomingMessageListene
         self._last_service_info = None
         self._last_reconnect_time = 0
         self._setup_complete = False  # Добавляем флаг завершения настройки
+        self._discovered_device_info = None  # Сохраняем информацию об обнаруженном устройстве
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Update data via library."""
@@ -154,15 +157,29 @@ class PolarisDataUpdateCoordinator(DataUpdateCoordinator, IncomingMessageListene
         basetype = str_properties.get('basetype', '00')
         devtype = str_properties.get('devtype', '00')
         firmware = str_properties.get('firmware', '0.00')
-        model = f"{vendor} {basetype}"
         
-        _LOGGER.info(f"Device info: vendor={vendor}, basetype={basetype}, devtype={devtype}, firmware={firmware}")
+        # Используем сохраненную информацию об устройстве, если properties пустые
+        if not str_properties and self._discovered_device_info:
+            _LOGGER.info("Using saved device info due to empty properties")
+            vendor = self._discovered_device_info.get('vendor', 'Polaris')
+            basetype = self._discovered_device_info.get('basetype', '00')
+            devtype = self._discovered_device_info.get('devtype', '00')
+            firmware = self._discovered_device_info.get('firmware', '0.00')
+        
+        # Получаем модель из POLARIS_DEVICE или используем базовый тип
+        try:
+            model = POLARIS_DEVICE[int(devtype)]['model']
+        except (KeyError, ValueError):
+            model = f"Type {devtype}"
+            _LOGGER.warning("Unknown device type: %s, using default model", devtype)
+        
+        _LOGGER.info(f"Device info: vendor={vendor}, basetype={basetype}, devtype={devtype}, firmware={firmware}, model={model}")
         
         self.device_info = DeviceInfo(
             identifiers={(DOMAIN, self._mac)},
-            name=f"{vendor} {POLARIS_DEVICE[int(devtype)]['model']} {self._mac}",
+            name=f"{vendor} {model} {self._mac}",
             manufacturer=vendor,
-            model=POLARIS_DEVICE[int(devtype)]['model'],
+            model=model,
             sw_version=firmware,
             model_id=devtype,
         )
@@ -221,12 +238,17 @@ class PolarisDataUpdateCoordinator(DataUpdateCoordinator, IncomingMessageListene
                 "r": message.r,
                 "g": message.g, 
                 "b": message.b,
-                "w": message.w
+                "w": message.w,
+                "data_length": message.data_length
             }
-            
+        elif isinstance(message, WeightMessage):
+            self.data["weight"] = message.weight
+            _LOGGER.debug("---WEIGHT--- %s grams", message.weight)
+    
         elif isinstance(message, DeviceHardwareMessage):
             self.data["device_hardware"] = message.hw
             _LOGGER.debug("---HARDWARE--- %s",message.hw)
+            
         elif isinstance(message, ErrorMessage):
             self.data["error"] = message.value
         
@@ -369,15 +391,24 @@ class PolarisDataUpdateCoordinator(DataUpdateCoordinator, IncomingMessageListene
         basetype = device_info.get('basetype', '00')
         devtype = device_info.get('devtype', '00')
         firmware = device_info.get('firmware', '0.00')
-        model = f"{vendor} {basetype}"
         
-        _LOGGER.info(f"Device info from dict: vendor={vendor}, basetype={basetype}, devtype={devtype}, firmware={firmware}")
+        # Сохраняем информацию об устройстве для будущего использования
+        self._discovered_device_info = device_info
+        
+        # Получаем модель из POLARIS_DEVICE или используем базовый тип
+        try:
+            model = POLARIS_DEVICE[int(devtype)]['model']
+        except (KeyError, ValueError):
+            model = f"Type {devtype}"
+            _LOGGER.warning("Unknown device type: %s, using default model", devtype)
+        
+        _LOGGER.info(f"Device info from dict: vendor={vendor}, basetype={basetype}, devtype={devtype}, firmware={firmware}, model={model}")
         
         self.device_info = DeviceInfo(
             identifiers={(DOMAIN, self._mac)},
-            name=f"{vendor} {POLARIS_DEVICE[int(devtype)]['model']} {self._mac}",
+            name=f"{vendor} {model} {self._mac}",
             manufacturer=vendor,
-            model=POLARIS_DEVICE[int(devtype)]['model'],
+            model=model,
             sw_version=firmware,
             model_id=devtype,
         )
@@ -449,7 +480,7 @@ class PolarisDataUpdateCoordinator(DataUpdateCoordinator, IncomingMessageListene
                 await self._hass.async_add_executor_job(
                     self.kettle.discover, 
                     True,  # wait
-                    30,    # timeout
+                    5,     # timeout
                     zeroconf_instance,
                     discovered_device_info  # discovered_device_info
                 )
@@ -463,14 +494,22 @@ class PolarisDataUpdateCoordinator(DataUpdateCoordinator, IncomingMessageListene
             else:
                 # Run discovery in executor since it's blocking
                 service_info = await self._hass.async_add_executor_job(
-                    self.kettle.discover, True, 30, zeroconf_instance
+                    self.kettle.discover, True, 10, zeroconf_instance
                 )
                 
                 if not service_info:
-                    raise UpdateFailed("Device discovery failed - device not found")
-                
-                # Создаем device_info с реальными данными устройства
-                self._create_device_info(service_info)
+                    _LOGGER.warning("Device discovery failed - device not found, but will continue with setup")
+                    # Не прерываем настройку, продолжаем без service_info
+                    # Создаем базовый device_info
+                    self._create_device_info_from_dict({
+                        'vendor': 'Polaris',
+                        'basetype': '00', 
+                        'devtype': '00',
+                        'firmware': '0.00'
+                    })
+                else:
+                    # Создаем device_info с реальными данными устройства
+                    self._create_device_info(service_info)
                 
                 # Устанавливаем себя как слушатель обновлений устройства
                 self.kettle.set_coordinator_listener(self)
@@ -543,9 +582,10 @@ class PolarisDataUpdateCoordinator(DataUpdateCoordinator, IncomingMessageListene
         
         await self._hass.async_add_executor_job(set_night)
 
-    async def async_set_color_night(self, r: int, g: int, b: int) -> None:
-        """Set color night state."""
+    async def async_set_color_night(self, r: int, g: int, b: int, w: int = 0, data_length: int = 4) -> None:
+        """Set color night state with variable data length."""
         def set_color_night():
-            self.kettle.set_color_night(r, g, b, lambda x: _LOGGER.debug(f"Color night set callback: {x}"))
+            self.kettle.set_color_night(r, g, b, w, data_length, 
+                                       lambda x: _LOGGER.debug(f"Color night set callback: {x}"))
         
         await self._hass.async_add_executor_job(set_color_night)

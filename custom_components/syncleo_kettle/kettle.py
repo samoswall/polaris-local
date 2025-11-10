@@ -4,6 +4,7 @@ import threading
 import logging
 import zeroconf
 import asyncio
+import time
 from abc import abstractmethod
 from ipaddress import ip_address, IPv4Address, IPv6Address
 from typing import Optional, List, Union
@@ -60,6 +61,11 @@ class DeviceDiscover(threading.Thread, zeroconf.ServiceListener):
             self._logger.warning(f'add_listener: listener {listener} already in the listeners list')
 
     def set_info(self, info: zeroconf.ServiceInfo):
+        # Проверяем что properties не пустые
+        if not info.properties:
+            self._logger.debug("set_info: ignoring service info with empty properties")
+            return
+            
         valid_addresses = self._get_valid_addresses(info)
         if not valid_addresses:
             raise ValueError('no valid addresses')
@@ -91,6 +97,12 @@ class DeviceDiscover(threading.Thread, zeroconf.ServiceListener):
         info = zc.get_service_info(type_, name)
         if name.startswith(f'{self._mac}.'):
             self._logger.info(f'{method}: type={type_} name={name}')
+            
+            # Игнорируем уведомления с пустыми свойствами
+            if not info.properties:
+                self._logger.debug(f'{method}: ignoring due to empty properties')
+                return
+                
             try:
                 self.set_info(info)
             except ValueError as exc:
@@ -296,7 +308,6 @@ class Kettle(DeviceListener, ConnectionStatusListener):
         if self.conn:
             self.conn.stop_connection()
             # В синхронном контексте можно использовать time.sleep
-            import time
             time.sleep(0.5)
             self.conn = None
         else:
@@ -395,7 +406,26 @@ class Kettle(DeviceListener, ConnectionStatusListener):
         if wait:
             self._find_evt.clear()
             try:
-                self._find_evt.wait(timeout=timeout)
+                # Ждем с таймаутом, но если свойства пустые, продолжаем ждать
+                found_with_properties = False
+                start_time = time.time()
+                while not found_with_properties and (timeout is None or (time.time() - start_time < timeout)):
+                    remaining_time = timeout - (time.time() - start_time) if timeout else None
+                    if remaining_time and remaining_time <= 0:
+                        break
+                        
+                    wait_time = min(1.0, remaining_time) if remaining_time else 1.0
+                    self._find_evt.wait(timeout=wait_time)
+                    if self.device.si and self.device.si.properties:
+                        found_with_properties = True
+                    else:
+                        self._logger.debug("Discovered device has empty properties, continuing to wait...")
+                        self._find_evt.clear()
+                        
+                if not found_with_properties:
+                    self._logger.warning("Timeout waiting for device with properties")
+                    return None
+                    
             except KeyboardInterrupt:
                 self.device.stop()
                 return None
@@ -528,12 +558,14 @@ class Kettle(DeviceListener, ConnectionStatusListener):
             
         message = NightMessage(enabled)
         self.conn.enqueue_message(WrappedMessage(message, handler=callback, ack=True))
-    def set_color_night(self, r: int, g: int, b: int, callback: callable):
-        """Set color night state."""
+
+    def set_color_night(self, r: int, g: int, b: int, w: int = 0, data_length: int = 4, callback: callable = None):
+        """Set color night state with variable data length."""
         if self.conn is None:
             self._logger.error("Cannot set color night: not connected")
-            callback(False)
+            if callback:
+                callback(False)
             return
             
-        message = ColorNightMessage(r, g, b)
+        message = ColorNightMessage(r, g, b, w, data_length)
         self.conn.enqueue_message(WrappedMessage(message, handler=callback, ack=True))

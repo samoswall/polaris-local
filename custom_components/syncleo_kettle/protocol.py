@@ -592,28 +592,103 @@ class BacklightMessage(SimpleBooleanMessage):
 class ColorNightMessage(CmdOutgoingMessage, CmdIncomingMessage):
     TYPE = 66
 
-    def __init__(self, r: int, g: int, b: int, seq: Optional[int] = None):
+    def __init__(self, r: int = 0, g: int = 0, b: int = 0, w: int = 0, data_length: int = 4, seq: Optional[int] = None):
         super().__init__(seq)
         self.r = r  # Красный (0-255)
-        self.g = g  # Зеленый (0-255)
+        self.g = g  # Зеленый (0-255) 
         self.b = b  # Синий (0-255)
-        self.w = 0  # Команда 4 байта и первый всегда 0
+        self.w = w  # Белый (0-255)
+        self.data_length = data_length  # Длина данных: 1, 2, 3 или 4 байта
 
     @classmethod
     def from_packed_data(cls, data: bytes, seq=0) -> ColorNightMessage:
-        assert len(data) == 4, 'data size expected to be 4'
-        w, r, g, b = struct.unpack('<BBBB', data)
-        return ColorNightMessage(r, g, b, seq=seq)
+        """Создает сообщение из данных переменной длины."""
+        data_length = len(data)
+        
+        if data_length == 1:
+            # 1 байт: только белый канал
+            w = struct.unpack('<B', data)[0]
+            return ColorNightMessage(w=w, data_length=1, seq=seq)
+        elif data_length == 2:
+            # 2 байта: белый и красный
+            w, r = struct.unpack('<BB', data)
+            return ColorNightMessage(r=r, w=w, data_length=2, seq=seq)
+        elif data_length == 3:
+            # 3 байта: RGB
+            r, g, b = struct.unpack('<BBB', data)
+            return ColorNightMessage(r=r, g=g, b=b, data_length=3, seq=seq)
+        elif data_length == 4:
+            # 4 байта: RGBW
+            w, r, g, b = struct.unpack('<BBBB', data)
+            return ColorNightMessage(r=r, g=g, b=b, w=w, data_length=4, seq=seq)
+        else:
+            raise ValueError(f"Invalid data length for ColorNightMessage: {data_length}")
 
     def pack_data(self) -> bytes:
-        return struct.pack('<BBBB', self.w, self.r, self.g, self.b)
+        """Упаковывает данные в соответствии с требуемой длиной."""
+        if self.data_length == 1:
+            # Только белый канал
+            return struct.pack('<B', self.w)
+        elif self.data_length == 2:
+            # Белый и красный
+            return struct.pack('<BB', self.w, self.r)
+        elif self.data_length == 3:
+            # RGB
+            return struct.pack('<BBB', self.r, self.g, self.b)
+        elif self.data_length == 4:
+            # RGBW
+            return struct.pack('<BBBB', self.w, self.r, self.g, self.b)
+        else:
+            raise ValueError(f"Invalid data length for packing: {self.data_length}")
 
     def _repr_fields(self) -> ReprDict:
-        return {
-            'color_r': f'{self.r:02x}',
-            'color_g': f'{self.g:02x}',
-            'color_b': f'{self.b:02x}'
-        }
+        fields = {}
+        if self.data_length >= 1:
+            fields['white'] = f'{self.w:02x}'
+        if self.data_length >= 2:
+            fields['color_r'] = f'{self.r:02x}'
+        if self.data_length >= 3:
+            fields['color_g'] = f'{self.g:02x}'
+            fields['color_b'] = f'{self.b:02x}'
+        fields['data_length'] = self.data_length
+        return fields
+
+    def set_data_length(self, data_length: int):
+        """Устанавливает длину данных для отправки."""
+        if data_length not in (1, 2, 3, 4):
+            raise ValueError("Data length must be 1, 2, 3, or 4")
+        self.data_length = data_length
+
+class WeightMessage(CmdIncomingMessage):
+    TYPE = 43
+
+    weight: int  # Вес в граммах
+
+    def __init__(self, weight: int, seq: Optional[int] = None):
+        super().__init__(seq)
+        self.weight = weight
+
+    @classmethod
+    def from_packed_data(cls, data: bytes, seq=0) -> WeightMessage:
+        """Создает сообщение из данных веса."""
+        assert len(data) == 2, 'data size expected to be 2 bytes for weight'
+        
+        # Первый байт - младший, второй - старший (little-endian)
+        low_byte, high_byte = struct.unpack('<BB', data)
+        weight = low_byte + (high_byte << 8)
+        
+        return WeightMessage(weight, seq=seq)
+
+    def pack_data(self) -> bytes:
+        """Упаковывает данные веса (только для исходящих сообщений, если нужно)."""
+        # Для сенсора веса обычно только прием, но на всякий случай реализуем
+        low_byte = self.weight & 0xFF
+        high_byte = (self.weight >> 8) & 0xFF
+        return struct.pack('<BB', low_byte, high_byte)
+
+    def _repr_fields(self) -> ReprDict:
+        return {'weight': self.weight}
+        
 
 class CurrentTemperatureMessage(CmdIncomingMessage):
     TYPE = 20

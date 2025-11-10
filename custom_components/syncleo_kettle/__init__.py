@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import asyncio
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -50,9 +51,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.warning("Zeroconf not available, falling back to internal instance")
         zc = None
     
+    # Try to get discovered device info from discovery singleton with short wait
+    discovery = SyncleoDiscovery.get_instance()
+    discovered_device_info = None
+    
+    # Ждем до 3 секунд для обнаружения устройства в кэше
+    for _ in range(6):  # 6 попыток по 0.5 секунды = 3 секунды
+        discovered_devices = await hass.async_add_executor_job(discovery.get_devices)
+                                 
+        for device in discovered_devices:
+            if device['mac'] == mac:
+                discovered_device_info = device
+                _LOGGER.info("Found device in discovery cache: %s", device)
+                break
+        if discovered_device_info is not None:
+            break
+        await asyncio.sleep(0.5)
+    
     # Setup the kettle connection
     try:
-        await coordinator.async_setup(zc)
+        await coordinator.async_setup(zc, discovered_device_info)
         await coordinator.async_config_entry_first_refresh()
     except Exception as err:
         _LOGGER.error("Device %s setup failed: %s", mac, err)

@@ -159,6 +159,41 @@ class ConfigFlow(config_entries.ConfigFlow, domain="syncleo_kettle"):
         await self.async_set_unique_id(normalized_mac)
         self._abort_if_unique_id_configured()
         
+        # Извлекаем информацию об устройстве из свойств Zeroconf
+        properties = discovery_info.properties
+        vendor = "Unknown"
+        basetype = "00"
+        devtype = "00"
+        
+        if properties:
+            # Конвертируем свойства в строковый формат
+            str_properties = {}
+            for key, value in properties.items():
+                try:
+                    key_str = key.decode('utf-8') if isinstance(key, bytes) else str(key)
+                    value_str = value.decode('utf-8') if isinstance(value, bytes) else str(value)
+                    str_properties[key_str] = value_str
+                except Exception as prop_err:
+                    _LOGGER.debug("Error decoding property %s: %s", key, prop_err)
+                    continue
+            
+            vendor = str_properties.get('vendor', 'Unknown')
+            basetype = str_properties.get('basetype', '00')
+            devtype = str_properties.get('devtype', '00')
+        
+        # Создаем понятное имя устройства
+        try:
+            model = POLARIS_DEVICE[int(devtype)]['model']
+        except (KeyError, ValueError):
+            model = f"Type {devtype}"
+        
+        device_name = f"{vendor} {model}"
+        
+        # Создаем контекст для отображения понятного имени
+        self.context["title_placeholders"] = {
+            "name": device_name,
+            "mac": normalized_mac
+        }
         return await self.async_step_user()
 
 async def validate_input(hass: HomeAssistant, data: dict[str, Any], discovered_devices: dict = None) -> dict[str, Any]:

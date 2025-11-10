@@ -9,13 +9,13 @@ from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorStateClass,
 )
-from homeassistant.const import UnitOfTemperature
+from homeassistant.const import UnitOfTemperature, UnitOfMass
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
 from .coordinator import PolarisDataUpdateCoordinator
-from .const import DOMAIN
+from .const import DOMAIN, POLARIS_KETTLE_WITH_WEIGHT_TYPE
 from .protocol import DeviceHardwareMessage
 
 _LOGGER = logging.getLogger(__name__)
@@ -29,12 +29,63 @@ async def async_setup_entry(
     """Set up Syncleo Kettle sensor platform from config entry."""
     coordinator: PolarisDataUpdateCoordinator = hass.data[DOMAIN][config_entry.entry_id]
     
-    sensors = [
-        CurrentTemperatureSensor(coordinator, config_entry.entry_id),
-        DeviceHardwareSensor(coordinator, config_entry.entry_id),
-    ]
+    # Проверяем что device_info был создан
+    if coordinator.device_info is None:
+        _LOGGER.error("Device info not available, cannot create entity")
+        return
+    # Добавляем только чайники с весом
+    if coordinator.device_info['model_id'] in POLARIS_KETTLE_WITH_WEIGHT_TYPE:
+        sensors = [
+            CurrentTemperatureSensor(coordinator, config_entry.entry_id),
+            DeviceHardwareSensor(coordinator, config_entry.entry_id),
+            WeightSensor(coordinator, config_entry.entry_id),
+        ]
+    else:
+        sensors = [
+            CurrentTemperatureSensor(coordinator, config_entry.entry_id),
+            DeviceHardwareSensor(coordinator, config_entry.entry_id),
+        ]
     
     async_add_entities(sensors)
+
+class WeightSensor(SensorEntity):
+    """Representation of a Weight sensor."""
+    
+    _attr_has_entity_name = True
+    _attr_name = "Weight"
+    _attr_native_unit_of_measurement = UnitOfMass.GRAMS
+    _attr_device_class = SensorDeviceClass.WEIGHT
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:weight-gram"
+    
+    def __init__(self, coordinator: PolarisDataUpdateCoordinator, entry_id: str) -> None:
+        """Initialize the Current Temperature sensor."""
+        self.coordinator = coordinator
+        self._entry_id = entry_id
+        self._attr_unique_id = f"{coordinator._mac}_weight"
+        self._attr_device_info = coordinator.device_info
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        return self.coordinator.data.get("connected", False)
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the weight."""
+        return self.coordinator.data.get("weight")
+
+    async def async_added_to_hass(self) -> None:
+        """When entity is added to hass."""
+        self.async_on_remove(
+            self.coordinator.async_add_listener(self.async_write_ha_state)
+        )
+
+    @property
+    def should_poll(self) -> bool:
+        """No need to poll, coordinator notifies of updates."""
+        return False
+
 
 class CurrentTemperatureSensor(SensorEntity):
     """Representation of a Current Temperature sensor."""
