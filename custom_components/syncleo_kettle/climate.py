@@ -1,4 +1,4 @@
-"""Climate platform for Syncleo Kettle."""
+"""Climate platform for Syncleo heater-class devices (RusClimate convectors)."""
 from __future__ import annotations
 
 import logging
@@ -7,6 +7,7 @@ from typing import Any
 from homeassistant.components.climate import (
     ClimateEntity,
     ClimateEntityFeature,
+    HVACAction,
     HVACMode,
 )
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
@@ -14,48 +15,69 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
-from .coordinator import KettleDataUpdateCoordinator
-from .const import DOMAIN
+from .coordinator import PolarisDataUpdateCoordinator
+from .const import (
+    DOMAIN,
+    POLARIS_HEATER_TYPE,
+    HEATER_MIN_TEMP,
+    HEATER_MAX_TEMP,
+    HEATER_TEMP_STEP,
+    HEATER_PRESET_COMFORT,
+    HEATER_PRESET_TO_MODE,
+    HEATER_MODE_TO_PRESET,
+    HEATER_FAN_AUTO,
+    HEATER_FAN_MODES,
+    HEATER_MAX_INTENSITY,
+)
 from .protocol import PowerType
 
 _LOGGER = logging.getLogger(__name__)
 
-SUPPORTED_TEMPERATURES = list(range(40, 101, 5))  # 40°C to 100°C in 5°C steps
 
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: ConfigType,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up Syncleo Kettle climate platform from config entry."""
-    coordinator: KettleDataUpdateCoordinator = hass.data[DOMAIN][config_entry.entry_id]
-    
-    async_add_entities([SyncleoKettleClimate(coordinator, config_entry.entry_id)])
+    """Set up the climate platform. Only for heater-class devices."""
+    coordinator: PolarisDataUpdateCoordinator = hass.data[DOMAIN][config_entry.entry_id]
 
-class SyncleoKettleClimate(ClimateEntity):
-    """Representation of a Syncleo Kettle as a climate device."""
-    
+    if coordinator.device_info is None:
+        _LOGGER.error("Device info not available, cannot create climate entity")
+        return
+
+    if coordinator.device_info["model_id"] in POLARIS_HEATER_TYPE:
+        async_add_entities([SyncleoHeaterClimate(coordinator, config_entry.entry_id)])
+
+
+class SyncleoHeaterClimate(ClimateEntity):
+    """Representation of a Syncleo/RusClimate convector heater."""
+
     _attr_has_entity_name = True
     _attr_name = None
-    
-    def __init__(self, coordinator: KettleDataUpdateCoordinator, entry_id: str) -> None:
-        """Initialize the climate device."""
+    _attr_translation_key = "heater"
+
+    _attr_temperature_unit = UnitOfTemperature.CELSIUS
+    _attr_hvac_modes = [HVACMode.OFF, HVACMode.HEAT]
+    _attr_preset_modes = list(HEATER_PRESET_TO_MODE.keys())
+    _attr_fan_modes = HEATER_FAN_MODES
+    _attr_min_temp = HEATER_MIN_TEMP
+    _attr_max_temp = HEATER_MAX_TEMP
+    _attr_target_temperature_step = HEATER_TEMP_STEP
+    _attr_supported_features = (
+        ClimateEntityFeature.TARGET_TEMPERATURE
+        | ClimateEntityFeature.PRESET_MODE
+        | ClimateEntityFeature.FAN_MODE
+        | ClimateEntityFeature.TURN_ON
+        | ClimateEntityFeature.TURN_OFF
+    )
+
+    def __init__(self, coordinator: PolarisDataUpdateCoordinator, entry_id: str) -> None:
+        """Initialize the heater climate device."""
         self.coordinator = coordinator
         self._entry_id = entry_id
         self._attr_unique_id = f"{coordinator._mac}_climate"
         self._attr_device_info = coordinator.device_info
-        
-        # Static attributes
-        self._attr_temperature_unit = UnitOfTemperature.CELSIUS
-        self._attr_supported_features = (
-            ClimateEntityFeature.TARGET_TEMPERATURE |
-            ClimateEntityFeature.TURN_ON |
-            ClimateEntityFeature.TURN_OFF
-        )
-        self._attr_hvac_modes = [HVACMode.OFF, HVACMode.HEAT]
-        self._attr_min_temp = 40
-        self._attr_max_temp = 100
-        self._attr_target_temperature_step = 5
 
     @property
     def available(self) -> bool:
@@ -75,21 +97,36 @@ class SyncleoKettleClimate(ClimateEntity):
     @property
     def hvac_mode(self) -> HVACMode:
         """Return current operation mode."""
-        power_type = self.coordinator.data.get("power_type")
-        if power_type == PowerType.OFF:
+        if self.coordinator.data.get("power_type", PowerType.OFF) == PowerType.OFF:
             return HVACMode.OFF
-        else:
-            return HVACMode.HEAT
+        return HVACMode.HEAT
 
     @property
-    def hvac_action(self) -> str | None:
+    def hvac_action(self) -> HVACAction:
         """Return current HVAC action."""
+        if self.hvac_mode == HVACMode.OFF:
+            return HVACAction.OFF
         if self.coordinator.data.get("is_heating", False):
-            return "heating"
-        elif self.hvac_mode == HVACMode.HEAT:
-            return "idle"
-        else:
-            return "off"
+            return HVACAction.HEATING
+        return HVACAction.IDLE
+
+    @property
+    def preset_mode(self) -> str | None:
+        """Return the current preset (comfort/eco/away).
+
+        None when off or when running a manual intensity level (the device then
+        reports a non-preset "manual" mode).
+        """
+        power_type = self.coordinator.data.get("power_type", PowerType.OFF)
+        return HEATER_MODE_TO_PRESET.get(power_type.value)
+
+    @property
+    def fan_mode(self) -> str | None:
+        """Return the intensity as a fan mode: 'auto' or '1'..'10'."""
+        intensity = self.coordinator.data.get("intensity", 0)
+        if not intensity:
+            return HEATER_FAN_AUTO
+        return str(intensity)
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
         """Set new target temperature."""
@@ -99,10 +136,46 @@ class SyncleoKettleClimate(ClimateEntity):
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set new operation mode."""
         if hvac_mode == HVACMode.OFF:
-            await self.coordinator.async_set_power(PowerType.OFF)
-        else:  # HVACMode.HEAT
-            # Use CUSTOM mode to allow custom temperature
-            await self.coordinator.async_set_power(PowerType.CUSTOM)
+            await self.coordinator.async_set_power_type(PowerType.OFF)
+        else:  # HVACMode.HEAT -> resume in Comfort unless already on
+            if self.coordinator.data.get("power_type", PowerType.OFF) == PowerType.OFF:
+                await self.coordinator.async_set_power_type(
+                    PowerType(HEATER_PRESET_TO_MODE[HEATER_PRESET_COMFORT])
+                )
+
+    async def async_set_preset_mode(self, preset_mode: str) -> None:
+        """Set a preset (also powers the heater on; resets intensity to Auto)."""
+        mode_value = HEATER_PRESET_TO_MODE.get(preset_mode)
+        if mode_value is None:
+            _LOGGER.warning("Unknown heater preset: %s", preset_mode)
+            return
+        await self.coordinator.async_set_power_type(PowerType(mode_value))
+
+    async def async_set_fan_mode(self, fan_mode: str) -> None:
+        """Set the intensity/power level. 'auto' or '1'..'10'.
+
+        A fixed level makes the device switch to its manual mode.
+        """
+        if fan_mode == HEATER_FAN_AUTO:
+            intensity = 0
+        else:
+            try:
+                intensity = int(fan_mode)
+            except ValueError:
+                _LOGGER.warning("Unknown heater fan mode: %s", fan_mode)
+                return
+            intensity = max(1, min(HEATER_MAX_INTENSITY, intensity))
+        await self.coordinator.async_set_intensity(intensity)
+
+    async def async_turn_on(self) -> None:
+        """Turn the heater on (Comfort)."""
+        await self.coordinator.async_set_power_type(
+            PowerType(HEATER_PRESET_TO_MODE[HEATER_PRESET_COMFORT])
+        )
+
+    async def async_turn_off(self) -> None:
+        """Turn the heater off."""
+        await self.coordinator.async_set_power_type(PowerType.OFF)
 
     async def async_added_to_hass(self) -> None:
         """When entity is added to hass."""

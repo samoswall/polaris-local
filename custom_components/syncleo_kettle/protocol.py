@@ -219,7 +219,13 @@ class Message:
                     cl = _cl
                     break
 
-            m = cl.from_packed_data(data, seq=head.seq)
+            try:
+                m = cl.from_packed_data(data, seq=head.seq)
+            except Exception as exc:
+                _logger.debug(f'type {type} failed to parse as {cl.__name__} ({exc}); falling back to UnknownMessage')
+                m = UnknownMessage.from_packed_data(data, seq=head.seq)
+                m.set_type(type)
+                return m
             if isinstance(m, UnknownMessage):
                 m.set_type(type)
             return m
@@ -405,6 +411,50 @@ class TargetTemperatureMessage(CmdOutgoingMessage, CmdIncomingMessage):
 
     def _repr_fields(self) -> ReprDict:
         return {'temperature': self.temperature}
+
+
+class HeatIntensityMessage(CmdOutgoingMessage):
+    """Heater intensity / power level (protocol type 15).
+
+    Value 0 = Auto, 1..10 = fixed power level. Outgoing only: incoming type-15
+    frames are read from UnknownMessage in the coordinator so kettle parsing is
+    untouched (the incoming dispatch only scans CmdIncomingMessage subclasses).
+    Setting a fixed level makes the heater switch to its manual mode (mode 4).
+    """
+    TYPE = 15
+
+    intensity: int
+
+    def __init__(self, intensity: int, seq: Optional[int] = None):
+        super().__init__(seq)
+        self.intensity = intensity
+
+    def pack_data(self) -> bytes:
+        return self.intensity.to_bytes(1, byteorder='little')
+
+    def _repr_fields(self) -> ReprDict:
+        return {'intensity': self.intensity}
+
+
+class WindowDetectionMessage(CmdOutgoingMessage):
+    """Heater open-window detection toggle (protocol type 38): 0=off, 1=on.
+
+    Outgoing only: incoming type-38 frames are read from UnknownMessage in the
+    coordinator so kettle parsing is untouched.
+    """
+    TYPE = 38
+
+    value: bool
+
+    def __init__(self, value: bool, seq: Optional[int] = None):
+        super().__init__(seq)
+        self.value = value
+
+    def pack_data(self) -> bytes:
+        return struct.pack('<B', 1 if self.value else 0)
+
+    def _repr_fields(self) -> ReprDict:
+        return {'window_detection': self.value}
 
 
 class PingMessage(CmdIncomingMessage, CmdOutgoingMessage):

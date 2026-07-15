@@ -291,6 +291,38 @@ POLARIS_KETTLE_WITH_NIGHT_TYPE = ["36","37","86","97","106","117","164","175","1
 POLARIS_KETTLE_WITH_BACKLIGHT_TYPE = ["36","37","51","52","53","54","60","61","62","63","67","82","83","84","85","86","97","98","105","106","117","139","164","175","176","177","188","189","194","196","208","209","223","244","245","253","254","255","260","262","263","271","275","294","308"]
 POLARIS_KETTLE_WITH_TEA_TIME_MODE_TYPE = ["2","8","51","53","56","58","60","62","85","98","139","165","185","188","205","223","262","263","275","294"]
 POLARIS_KETTLE_WITH_KEEP_WITH_WARM_MODE_TYPE = ["205","262","294"]
+POLARIS_HEATER_TYPE = ["46","65","16","49","64"]
+
+# --- Heater (convector) climate configuration ---
+# Semantics cross-referenced from samoswall/polaris-mqtt (CLIMATES_HEATER) and
+# validated against a RusClimate/Syncleo PCH-0320WIFI (devtype 46) on 2026-07-08.
+HEATER_MIN_TEMP = 5
+HEATER_MAX_TEMP = 35
+HEATER_TEMP_STEP = 1
+
+# The heater reuses the kettle "mode" command (protocol type 1) to carry both power
+# and preset in a single value: 0=off, 1=comfort(on), 2=eco, 3=anti-frost.
+# These map onto the existing PowerType enum values (OFF/ON/BOILKEEP/WARMUP).
+HEATER_PRESET_COMFORT = "comfort"
+HEATER_PRESET_ECO = "eco"
+HEATER_PRESET_AWAY = "away"  # "Anti frost" in the ClimatOn app
+
+# preset name -> mode value (PowerType numeric value)
+HEATER_PRESET_TO_MODE = {
+    HEATER_PRESET_COMFORT: 1,
+    HEATER_PRESET_ECO: 2,
+    HEATER_PRESET_AWAY: 3,
+}
+# mode value -> preset name (only the "on" modes; 0 = off)
+HEATER_MODE_TO_PRESET = {v: k for k, v in HEATER_PRESET_TO_MODE.items()}
+
+# Heater intensity / power level, exposed as the climate fan_mode.
+# type 15: 0 = Auto (tied to the active preset), 1..10 = fixed power level.
+# Selecting a fixed level makes the device switch to its manual mode (mode 4);
+# selecting a preset resets the intensity back to Auto.
+HEATER_FAN_AUTO = "auto"
+HEATER_FAN_MODES = [HEATER_FAN_AUTO] + [str(n) for n in range(1, 11)]
+HEATER_MAX_INTENSITY = 10
 POLARIS_HUMIDDIFIER_TYPE = ["4","15","17","18","25","44","70","71","72","73","74","75","87","99","137","147","153","155","157","158"]
 POLARIS_HUMIDDIFIER_WITH_IONISER_TYPE = ["4","15","17","18","44","70","72","73","74","137","147","153","155","157","158"]
 POLARIS_HUMIDDIFIER_WITH_WARM_STREAM_TYPE = ["4","15","17","18","44","70","72","74","147","157","158"]

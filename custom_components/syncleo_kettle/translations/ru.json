@@ -30,6 +30,22 @@
       },
       "backlight": {
         "name": "Подсветка"
+      },
+      "window_detection": {
+        "name": "Определение открытого окна"
+      }
+    },
+    "climate": {
+      "heater": {
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "comfort": "Комфорт",
+              "eco": "Эко",
+              "away": "Антизамерзание"
+            }
+          }
+        }
       }
     },
     "water_heater": {
@@ -52,4 +68,4 @@
       }
     }
   }
-}
+}

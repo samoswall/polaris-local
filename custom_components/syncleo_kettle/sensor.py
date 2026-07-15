@@ -15,7 +15,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
 from .coordinator import PolarisDataUpdateCoordinator
-from .const import DOMAIN, POLARIS_KETTLE_WITH_WEIGHT_TYPE
+from .const import DOMAIN, POLARIS_KETTLE_WITH_WEIGHT_TYPE, POLARIS_HEATER_TYPE
 from .protocol import DeviceHardwareMessage
 
 _LOGGER = logging.getLogger(__name__)
@@ -33,19 +33,23 @@ async def async_setup_entry(
     if coordinator.device_info is None:
         _LOGGER.error("Device info not available, cannot create entity")
         return
-    # Добавляем только чайники с весом
+    is_heater = coordinator.device_info['model_id'] in POLARIS_HEATER_TYPE
+
+    sensors = [CurrentTemperatureSensor(coordinator, config_entry.entry_id)]
+
+    # Device Hardware is a kettle-only diagnostic; on heaters it only ever reads
+    # "unknown", so skip it for heater-class devices.
+    if not is_heater:
+        sensors.append(DeviceHardwareSensor(coordinator, config_entry.entry_id))
+
+    # Только чайники с весом сообщают вес.
     if coordinator.device_info['model_id'] in POLARIS_KETTLE_WITH_WEIGHT_TYPE:
-        sensors = [
-            CurrentTemperatureSensor(coordinator, config_entry.entry_id),
-            DeviceHardwareSensor(coordinator, config_entry.entry_id),
-            WeightSensor(coordinator, config_entry.entry_id),
-        ]
-    else:
-        sensors = [
-            CurrentTemperatureSensor(coordinator, config_entry.entry_id),
-            DeviceHardwareSensor(coordinator, config_entry.entry_id),
-        ]
-    
+        sensors.append(WeightSensor(coordinator, config_entry.entry_id))
+
+    # Heaters report an instantaneous power output level (0..10).
+    if is_heater:
+        sensors.append(CurrentPowerSensor(coordinator, config_entry.entry_id))
+
     async_add_entities(sensors)
 
 class WeightSensor(SensorEntity):
@@ -125,6 +129,43 @@ class CurrentTemperatureSensor(SensorEntity):
         """No need to poll, coordinator notifies of updates."""
         return False
 
+class CurrentPowerSensor(SensorEntity):
+    """Heater instantaneous power output level (0..10)."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Current Power"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:heat-wave"
+
+    def __init__(self, coordinator: PolarisDataUpdateCoordinator, entry_id: str) -> None:
+        """Initialize the Current Power sensor."""
+        self.coordinator = coordinator
+        self._entry_id = entry_id
+        self._attr_unique_id = f"{coordinator._mac}_current_power"
+        self._attr_device_info = coordinator.device_info
+
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        return self.coordinator.data.get("connected", False)
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the current power output level (0..10)."""
+        return self.coordinator.data.get("current_power")
+
+    async def async_added_to_hass(self) -> None:
+        """When entity is added to hass."""
+        self.async_on_remove(
+            self.coordinator.async_add_listener(self.async_write_ha_state)
+        )
+
+    @property
+    def should_poll(self) -> bool:
+        """No need to poll, coordinator notifies of updates."""
+        return False
+
+
 class DeviceHardwareSensor(SensorEntity):
     """Representation of a Device Hardware sensor."""
     
@@ -191,4 +232,4 @@ class DeviceHardwareSensor(SensorEntity):
     @property
     def should_poll(self) -> bool:
         """No need to poll, coordinator notifies of updates."""
-        return False
+        return False

@@ -18,6 +18,8 @@ from .protocol import (
     NightMessage,
     ColorNightMessage,
     TargetTemperatureMessage,
+    HeatIntensityMessage,
+    WindowDetectionMessage,
     PowerType,
     ConnectionStatus,
     ConnectionStatusListener,
@@ -466,7 +468,7 @@ class Kettle(DeviceListener, ConnectionStatusListener):
             return
     
         assert self.device.curve == 29, f'curve type {self.device.curve} is not implemented'
-        assert self.device.protocol == 2, f'protocol {self.device.protocol} is not supported'
+        assert self.device.protocol in (2, 3), f'protocol {self.device.protocol} is not supported'
     
         kw = {}
         if self._read_timeout is not None:
@@ -517,6 +519,26 @@ class Kettle(DeviceListener, ConnectionStatusListener):
         message = TargetTemperatureMessage(temp)
         self.conn.enqueue_message(WrappedMessage(message, handler=callback, ack=True))
         
+
+    def set_intensity(self, intensity: int, callback: callable):
+        """Set heater intensity/power level (0=Auto, 1..10)."""
+        if self.conn is None:
+            self._logger.error("Cannot set intensity: not connected")
+            callback(False)
+            return
+
+        message = HeatIntensityMessage(intensity)
+        self.conn.enqueue_message(WrappedMessage(message, handler=callback, ack=True))
+
+    def set_window_detection(self, enabled: bool, callback: callable):
+        """Enable/disable heater open-window detection (type 38)."""
+        if self.conn is None:
+            self._logger.error("Cannot set window detection: not connected")
+            callback(False)
+            return
+
+        message = WindowDetectionMessage(enabled)
+        self.conn.enqueue_message(WrappedMessage(message, handler=callback, ack=True))
 
     def set_child_lock(self, enabled: bool, callback: callable):
         """Set child lock state."""
