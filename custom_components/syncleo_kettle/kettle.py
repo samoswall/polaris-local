@@ -87,6 +87,30 @@ class DeviceDiscover(threading.Thread, zeroconf.ServiceListener):
                 self._logger.error(f'set_info: error while calling device_updated on {f}')
                 self._logger.exception(exc)
 
+    def refresh_info(self, timeout_ms: int = 3000) -> bool:
+        """Re-query the device over mDNS, bypassing the zeroconf record cache.
+
+        `get_service_info` answers from the cache, so a kettle that rebooted and
+        announced a new public key keeps being reported with the old one until
+        the cached record expires. Asking for the record explicitly puts the
+        current key in front of us.
+        """
+        if self._zc is None or self.si is None:
+            return False
+        try:
+            fresh = zeroconf.ServiceInfo(self.si.type, self.si.name)
+            if not fresh.request(self._zc, timeout_ms):
+                self._logger.debug('refresh_info: no answer from device')
+                return False
+            if not fresh.properties:
+                self._logger.debug('refresh_info: answer carried no properties')
+                return False
+            self.set_info(fresh)
+            return True
+        except Exception as exc:
+            self._logger.debug(f'refresh_info: failed: {exc}')
+            return False
+
     def add_service(self, zc: zeroconf.Zeroconf, type_: str, name: str) -> None:
         self._add_update_service('add_service', zc, type_, name)
 
@@ -279,6 +303,9 @@ class Kettle(DeviceListener, ConnectionStatusListener):
         self.device_token = device_token
         self.conn = None
         self.conn_status = None
+        # Public key the current session was negotiated with. The kettle rolls its
+        # key over when it reboots, which silently invalidates the session.
+        self._session_pubkey = None
         self._read_timeout = read_timeout
         self._find_evt = threading.Event()
         self._logger = logging.getLogger(f'{__name__}.{self.__class__.__name__}[{mac}]')  # Добавляем MAC в логгер
@@ -326,6 +353,23 @@ class Kettle(DeviceListener, ConnectionStatusListener):
             hasattr(current_service_info, 'properties') and 
             current_service_info.properties):
             
+            # A rebooted kettle announces itself with a freshly generated public
+            # key. The running session still holds the keys derived from the old
+            # one, so every frame fails to decrypt ("Invalid padding bytes") until
+            # the connection is rebuilt. Drop it here; the coordinator starts a new
+            # one on its next cycle, reading the current key.
+            if self.conn is not None and self._session_pubkey is not None:
+                try:
+                    current_pubkey = self.device.pubkey
+                except Exception as exc:
+                    current_pubkey = None
+                    self._logger.debug(f"Could not read public key on update: {exc}")
+                if current_pubkey is not None and current_pubkey != self._session_pubkey:
+                    self._logger.warning(
+                        "Device public key changed (%s… -> %s…), reconnecting",
+                        self._session_pubkey.hex()[:12], current_pubkey.hex()[:12])
+                    self.force_reconnect()
+
             # Уведомляем координатор об обновлении устройства
             if hasattr(self, '_coordinator_listener'):
                 try:
@@ -453,8 +497,13 @@ class Kettle(DeviceListener, ConnectionStatusListener):
             # Обновляем параметры существующего соединения
             self.conn.set_address(self.device.addr, self.device.port)
             self.conn.set_device_pubkey(self.device.pubkey)
+            self._session_pubkey = self.device.pubkey
             return
     
+        # The key is negotiated from the announcement, so make sure it is the
+        # one the device is using right now and not a cached leftover.
+        self.device.refresh_info()
+
         # Проверяем что device имеет все необходимые свойства
         try:
             curve = self.device.curve
@@ -485,6 +534,7 @@ class Kettle(DeviceListener, ConnectionStatusListener):
             self.conn.add_connection_status_listener(connection_status_listener)
     
         self.conn.start()
+        self._session_pubkey = self.device.pubkey
         self._logger.info("New UDP connection started")
 
     def stop_all(self):

@@ -83,7 +83,10 @@ class SyncleoKettleWaterHeater(WaterHeaterEntity):
         self._attr_temperature_unit = UnitOfTemperature.CELSIUS
         self._attr_supported_features = (
             WaterHeaterEntityFeature.TARGET_TEMPERATURE |
-            WaterHeaterEntityFeature.OPERATION_MODE
+            WaterHeaterEntityFeature.OPERATION_MODE |
+            # async_turn_on/async_turn_off are implemented below; without the flag
+            # Home Assistant rejects both services with ServiceNotSupported.
+            WaterHeaterEntityFeature.ON_OFF
         )
         # Режимы работы в зависимости от типа
         if (self.coordinator.device_info['model_id'] not in POLARIS_KETTLE_WITH_TEA_TIME_MODE_TYPE) and (self.coordinator.device_info['model_id'] not in POLARIS_KETTLE_WITH_KEEP_WITH_WARM_MODE_TYPE):

@@ -61,10 +61,20 @@ class ConfigFlow(config_entries.ConfigFlow, domain="syncleo_kettle"):
             description = f"{device['devtype']}: {device['mac']}"
             if device['vendor'] != 'Unknown':
                 description += f" ({device['vendor']}"
-                if int(device['basetype']) in POLARIS_DEVICE:
-                    description += f" {POLARIS_DEVICE[int(device['basetype'])]['model']}"
-                else:
-                    description += f" Unknown"
+                # Not every device advertises basetype — Polaris kettles announce
+                # devtype only, and discovery fills the missing one with the string
+                # "Unknown". Pick whichever is numeric instead of casting blindly.
+                type_code = next(
+                    (code for code in (device.get('basetype'), device.get('devtype'))
+                     if str(code).isdigit()),
+                    None,
+                )
+                model = (
+                    POLARIS_DEVICE.get(int(type_code), {}).get('model')
+                    if type_code is not None
+                    else None
+                )
+                description += f" {model}" if model else " Unknown"
                 description += ")"
 
 #            description = f"{device['devtype']}: {device['mac']}"
